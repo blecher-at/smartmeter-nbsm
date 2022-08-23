@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 from Cryptodome.Cipher import AES
 import argparse
 import binascii
@@ -6,32 +7,38 @@ import datetime
 import json
 import requests
 import time
+import configargparse
 
 # CONFIG PART
 
-# the encryption key you've got from Netz Burgenland. This is not the auth_key, which is not needed at all
-cfgEncKey = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 
-# if the publish mode is json, configure the http(s) endpoint here
-cfgJsonEndpoint = "http://kodal:8080/goSmartPV/SMCollect" 
-
-# if the publish mode is mqtt, configure the mqtt variables here
-cfgMqttServer = "192.168.1.235"
-cfgMqttUser = "" # leave empty if no user/password is needed
-cfgMqttPassword = "" # leave empty if no user/password is needed
-cfgMqttMainTopic = "nbsm/1/"
 
 # END CONFIG PART
 
 # parse command line parameeters to see which libraries are needed
-parser = argparse.ArgumentParser()
-parser.add_argument("--mode", help="The publish mode", choices=["stdout","json", "mqtt"], required=True)
-args = parser.parse_args()
+
+parser = configargparse.ArgParser(default_config_files=['/etc/nbsm.conf', '~/.nbsm'])
+parser.add('-c', '--config', required=False, is_config_file=True, help='config file path')
+parser.add("-m", "--mode", help="The publish mode", choices=["stdout","json", "mqtt"], required=True)
+parser.add("-v", "--verbose", help="print verbose messages", action='store_true')
+parser.add("--encryption-key", help="the encryption key you've got from Netz Burgenland. This is not the auth_key, which is not needed at all", required=True)
+args, extra_args = parser.parse_known_args()
+
 if (args.mode == "json"):
     import requests
+    parser.add("--json-endpoint", help="if the publish mode is json, configure the http(s) endpoint here", required=True)
+    args = parser.parse_args()
+
 elif (args.mode == "mqtt"):
     import paho.mqtt.client as mqtt
+    parser.add("--mqtt-server", help="if the publish mode is mqtt, configure the mqtt server", required=True)
+    parser.add("--mqtt-topic", help="if the publish mode is mqtt, configure the mqtt topic", required=True)
+    parser.add("--mqtt-user", help="if the publish mode is mqtt, configure the mqtt username")
+    parser.add("--mqtt-password", help="if the publish mode is mqtt, configure the mqtt password")
+    args = parser.parse_args()
 
+
+cfgEncKey = args.encryption_key
 encKey = bytearray(binascii.unhexlify(cfgEncKey))
 
 def decrypt_msg(readdata):
@@ -47,6 +54,7 @@ def decrypt_msg(readdata):
     cipher = AES.new(encKey, AES.MODE_GCM, initvec)
     plaintxt = cipher.decrypt(readdata[LandisHDCLHeaderSize + 15:-3])
 
+    #print("process: ", plaintxt.hex())
     Year = int.from_bytes(plaintxt[6:8], "big") 
     Month = plaintxt[8]
     Day = plaintxt[9]
@@ -54,53 +62,48 @@ def decrypt_msg(readdata):
     Minute = plaintxt[12]
     Second = plaintxt[13]
 
-    L1Voltage = int.from_bytes(plaintxt[21:23], "big") 
-    L2Voltage = int.from_bytes(plaintxt[24:26], "big") 
-    L3Voltage = int.from_bytes(plaintxt[27:29], "big")
-
-    L1Current = int.from_bytes(plaintxt[30:32], "big") / 100
-    L2Current = int.from_bytes(plaintxt[33:35], "big") / 100
-    L3Current = int.from_bytes(plaintxt[36:38], "big") / 100
-
-    ImportPower = int.from_bytes(plaintxt[39:43], "big")
-    ExportPower = int.from_bytes(plaintxt[44:48], "big")
-
-    ImportEnergy = int.from_bytes(plaintxt[49:53], "big")
-    ExportEnergy = int.from_bytes(plaintxt[54:58], "big")
-
+    i = 35
+    p = int.from_bytes(plaintxt[35:39], "big") 
+    r2 = int.from_bytes(plaintxt[40:44], "big") 
+    r3 = int.from_bytes(plaintxt[45:49], "big") 
+    r4 = int.from_bytes(plaintxt[50:54], "big") 
+    w = int.from_bytes(plaintxt[55:59], "big") 
+    r5 = int.from_bytes(plaintxt[60:64], "big") 
+    r6 = int.from_bytes(plaintxt[65:69], "big") 
+    
     jsdata = {}
     jsdata["datetime"] = datetime.datetime(Year, Month, Day, Hour, Minute, Second).isoformat()
 
+    jsdata["current_w"] = w
+    jsdata["total_wh"] = p
     jsdata["L1"] = {}
-    jsdata["L1"]["v"] = L1Voltage
-    jsdata["L1"]["a"] = L1Current
+    jsdata["L1"]["r2"] = r2
+    jsdata["L1"]["r3"] = r3
+    jsdata["L1"]["r4"] = r4
+    jsdata["L1"]["r5"] = r5
+    jsdata["L1"]["r6"] = r6
     
-    jsdata["L2"] = {}
-    jsdata["L2"]["v"] = L2Voltage
-    jsdata["L2"]["a"] = L2Current
-
-    jsdata["L3"] = {}
-    jsdata["L3"]["v"] = L3Voltage
-    jsdata["L3"]["a"] = L3Current
-
-    jsdata["actual"] = {}
-    jsdata["actual"]["in"] = ImportPower
-    jsdata["actual"]["out"] = ExportPower
-
-    jsdata["total"] = {}
-    jsdata["total"]["in"] = ImportEnergy
-    jsdata["total"]["out"] = ExportEnergy
 
     if (args.mode == "stdout"):
         print(json.dumps(jsdata))
     elif (args.mode == "json"):
-        #requests.post('http://kodal:8080/goSmartPV/SMCollect', json=json.dumps(jsdata))
+        # if the publish mode is json, configure the http(s) endpoint here
+        cfgJsonEndpoint = args.json_endpoint
         requests.post(cfgJsonEndpoint, json=jsdata)
     elif (args.mode == "mqtt"):
         publish_mqtt(jsdata)
 
 def publish_mqtt(jsdata):
     client = mqtt.Client("nbsm")
+    
+    # if the publish mode is mqtt, configure the mqtt variables here
+    cfgMqttServer = args.mqtt_server
+    cfgMqttUser = args.mqtt_user
+    cfgMqttPassword = args.mqtt_password
+    cfgMqttMainTopic = args.mqtt_topic
+
+    if (args.verbose):
+        print (args)
 
     if (len(cfgMqttUser) > 0):
         client.username_pw_set(username=cfgMqttUser, password=cfgMqttPassword)
@@ -108,16 +111,8 @@ def publish_mqtt(jsdata):
     client.connect(cfgMqttServer)
 
     client.publish(cfgMqttMainTopic + "status/datetime", jsdata["datetime"])
-    client.publish(cfgMqttMainTopic + "status/L1/v", jsdata["L1"]["v"])
-    client.publish(cfgMqttMainTopic + "status/L1/a", jsdata["L1"]["a"])
-    client.publish(cfgMqttMainTopic + "status/L2/v", jsdata["L2"]["v"])
-    client.publish(cfgMqttMainTopic + "status/L2/a", jsdata["L2"]["a"])
-    client.publish(cfgMqttMainTopic + "status/L3/v", jsdata["L3"]["v"])
-    client.publish(cfgMqttMainTopic + "status/L3/a", jsdata["L3"]["a"])
-    client.publish(cfgMqttMainTopic + "status/actual/in", jsdata["actual"]["in"])
-    client.publish(cfgMqttMainTopic + "status/actual/out", jsdata["actual"]["out"])
-    client.publish(cfgMqttMainTopic + "status/total/in", jsdata["total"]["in"])
-    client.publish(cfgMqttMainTopic + "status/total/out", jsdata["total"]["out"])
+    client.publish(cfgMqttMainTopic + "status/current_w", jsdata["current_w"])
+    client.publish(cfgMqttMainTopic + "status/total_wh", jsdata["total_wh"])
 
 ### main ###
 tty = serial.Serial(port='/dev/ttyUSB0', baudrate = 9600, parity =serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize=serial.EIGHTBITS, timeout=1)
