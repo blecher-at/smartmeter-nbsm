@@ -1,6 +1,5 @@
 #!/usr/bin/python3
 from Cryptodome.Cipher import AES
-import argparse
 import binascii
 import serial
 import datetime
@@ -18,25 +17,32 @@ import configargparse
 # parse command line parameeters to see which libraries are needed
 
 parser = configargparse.ArgParser(default_config_files=['/etc/nbsm.conf', '~/.nbsm'])
-parser.add('-c', '--config', required=False, is_config_file=True, help='config file path')
-parser.add("-m", "--mode", help="The publish mode", choices=["stdout","json", "mqtt"], required=True)
+parser.add('-c', '--config', required=False, is_config_file=True, help='config file path, by default looks into /etc/nbsm.conf or ~/.nbsm')
+parser.add("-m", "--mode", help="The publish mode", choices=["stdout","json", "mqtt"], required=True, default='stdout')
 parser.add("-v", "--verbose", help="print verbose messages", action='store_true')
-parser.add("--encryption-key", help="the encryption key you've got from Netz Burgenland. This is not the auth_key, which is not needed at all", required=True)
+parser.add("-d", "--device", help="the usb device to use (/dev/ttyUSB0 is used if not specified)", default='/dev/ttyUSB0')
+parser.add("--encryption-key", help="the encryption key you've got from Wiener Netze (https://smartmeter-web.wienernetze.at/#/anlagedaten). Kundenschnittstelle/Schluessel anzeige", required=True)
+
+parser.add("--json-endpoint", help="if the publish mode is json, configure the http(s) endpoint here")
+
+parser.add("--mqtt-server", help="if the publish mode is mqtt, configure the mqtt server", default='localhost')
+parser.add("--mqtt-topic", help="if the publish mode is mqtt, configure the mqtt topic", default='SMARTMETER/')
+parser.add("--mqtt-user", help="if the publish mode is mqtt, configure the mqtt username")
+parser.add("--mqtt-password", help="if the publish mode is mqtt, configure the mqtt password")
+
 args, extra_args = parser.parse_known_args()
 
 if (args.mode == "json"):
     import requests
-    parser.add("--json-endpoint", help="if the publish mode is json, configure the http(s) endpoint here", required=True)
-    args = parser.parse_args()
 
 elif (args.mode == "mqtt"):
     import paho.mqtt.client as mqtt
-    parser.add("--mqtt-server", help="if the publish mode is mqtt, configure the mqtt server", required=True)
-    parser.add("--mqtt-topic", help="if the publish mode is mqtt, configure the mqtt topic", required=True)
-    parser.add("--mqtt-user", help="if the publish mode is mqtt, configure the mqtt username")
-    parser.add("--mqtt-password", help="if the publish mode is mqtt, configure the mqtt password")
-    args = parser.parse_args()
 
+if (args.verbose):
+	print("----------")
+	print(parser.format_help())
+	print("----------")
+	print(parser.format_values()) 
 
 cfgEncKey = args.encryption_key
 encKey = bytearray(binascii.unhexlify(cfgEncKey))
@@ -54,7 +60,9 @@ def decrypt_msg(readdata):
     cipher = AES.new(encKey, AES.MODE_GCM, initvec)
     plaintxt = cipher.decrypt(readdata[LandisHDCLHeaderSize + 15:-3])
 
-    #print("process: ", plaintxt.hex())
+    if (args.verbose):
+        print("raw data: ", plaintxt.hex())
+
     Year = int.from_bytes(plaintxt[6:8], "big") 
     Month = plaintxt[8]
     Day = plaintxt[9]
@@ -64,24 +72,26 @@ def decrypt_msg(readdata):
 
     i = 35
     p = int.from_bytes(plaintxt[35:39], "big") 
-    r2 = int.from_bytes(plaintxt[40:44], "big") 
-    r3 = int.from_bytes(plaintxt[45:49], "big") 
-    r4 = int.from_bytes(plaintxt[50:54], "big") 
     w = int.from_bytes(plaintxt[55:59], "big") 
-    r5 = int.from_bytes(plaintxt[60:64], "big") 
-    r6 = int.from_bytes(plaintxt[65:69], "big") 
+    #r2 = int.from_bytes(plaintxt[40:44], "big") 
+    #r3 = int.from_bytes(plaintxt[45:49], "big") 
+    #r4 = int.from_bytes(plaintxt[50:54], "big") 
+    #r5 = int.from_bytes(plaintxt[60:64], "big") 
+    #r6 = int.from_bytes(plaintxt[65:69], "big") 
     
     jsdata = {}
     jsdata["datetime"] = datetime.datetime(Year, Month, Day, Hour, Minute, Second).isoformat()
 
     jsdata["current_w"] = w
     jsdata["total_wh"] = p
-    jsdata["L1"] = {}
-    jsdata["L1"]["r2"] = r2
-    jsdata["L1"]["r3"] = r3
-    jsdata["L1"]["r4"] = r4
-    jsdata["L1"]["r5"] = r5
-    jsdata["L1"]["r6"] = r6
+
+    # unclear what these mean
+    #jsdata["L1"] = {}
+    #jsdata["L1"]["r2"] = r2
+    #jsdata["L1"]["r3"] = r3
+    #jsdata["L1"]["r4"] = r4
+    #jsdata["L1"]["r5"] = r5
+    #jsdata["L1"]["r6"] = r6
     
 
     if (args.mode == "stdout"):
@@ -115,7 +125,7 @@ def publish_mqtt(jsdata):
     client.publish(cfgMqttMainTopic + "status/total_wh", jsdata["total_wh"])
 
 ### main ###
-tty = serial.Serial(port='/dev/ttyUSB0', baudrate = 9600, parity =serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize=serial.EIGHTBITS, timeout=1)
+tty = serial.Serial(port=args.device, baudrate = 9600, parity =serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, bytesize=serial.EIGHTBITS, timeout=1)
 
 data = bytearray()
 
