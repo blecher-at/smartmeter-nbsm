@@ -4,7 +4,7 @@ Ein Python3 Script um den 'Landis + Gyr E450' Smartmeter auszulesen.
 
 ## Description
 
-Entwickelt für den Smart Meter von Netz Burgenland, sollte aber auch für andere Netze funktionieren. Für das Projekt benutze ich einen optischen Lesekopf von Weidmann Elektronik (https://amzn.to/39XEpme), der mit USB angeschlossen ist. Kabelgebundene Leser (Über RJ12) sollten mit wenig Aufwand ebenso funktionieren.
+Entwickelt für den Smart Meter von Netz Burgenland, in diesem Repository angepasst für die Wiener Netze. Für das Projekt benutze ich einen optischen Lesekopf von Weidmann Elektronik (https://amzn.to/39XEpme), der mit USB angeschlossen ist. Kabelgebundene Leser (Über RJ12) sollten mit wenig Aufwand ebenso funktionieren.
 
 ## Getting Started
 
@@ -21,7 +21,7 @@ Wenn im MQTT Modus gestartet werden soll, ist zusätzlich noch das Paket 'paho-m
 ```
 pip3 install paho-mqtt
 ```
-* Zu Beginn des Scripts ist eine Config-Section. Bitte die notwendigen Parameter setzen.
+* Konfiguration kann über ein Config-File (.nbsm, /etc/nbsm.conf) oder Kommandozeilen-Parameter gesetzt werden. Details erfährt man mit `./nbsm.py -h`
 
 ### Executing program
 
